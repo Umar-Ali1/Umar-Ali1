@@ -58,7 +58,7 @@ A detailed engineering breakdown of how I architected a real enterprise IoT moni
 
 ## Writing
 
-📝 [Why I chose ClickHouse over PostgreSQL for a billion-row analytics platform](https://dev.to/Umar-Ali1/clickhouse-vs-postgresql) ← add after publishing
+📝 [Why I chose ClickHouse over PostgreSQL for a billion-row analytics platform](https://dev.to/Umar-Ali1/clickhouse-vs-postgresql)
 
 ---
 
