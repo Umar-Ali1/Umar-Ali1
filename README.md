@@ -36,7 +36,7 @@ Currently leading architecture at [CodingCops](https://codingcops.com), where I 
 ### 🔴 [MarketPulse](https://github.com/Umar-Ali1/market-pulse) — Real-Time Crypto Analytics
 Live OHLCV data ingested every 10s via CoinGecko → ClickHouse time-series storage → multi-tier Redis cache → 60fps ECharts dashboard. Django + Next.js 15 + WebSocket push updates.
 
-**→ [Live Demo](https://market-pulse.vercel.app)**
+
 
 ---
 
@@ -58,7 +58,7 @@ A detailed engineering breakdown of how I architected a real enterprise IoT moni
 
 ## Writing
 
-📝 [Why I chose ClickHouse over PostgreSQL for a billion-row analytics platform](https://dev.to/Umar-Ali1/clickhouse-vs-postgresql)
+📝 [Why I chose ClickHouse over PostgreSQL for a billion-row analytics platform](https://dev.to/umarali1/why-i-chose-clickhouse-over-postgresql-for-a-billion-row-analytics-platform-599f)
 
 ---
 
