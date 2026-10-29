@@ -955,15 +955,25 @@ button.ghost:hover {
     bottom: auto;
     top: calc(58vh - 110px);
   }
+  /* Flatten the sidebar so the brand bar can sit above the map. */
   .sidebar {
+    display: contents;
+  }
+  .brand {
+    order: 0;
+  }
+  .sidebar-body {
     order: 2;
-    border-right: 0;
+  }
+  .map-legend {
+    display: none;
+  }
+  /* Scale the disc, not the marker: Leaflet positions markers via transform. */
+  .pin-svg > span {
+    transform: scale(0.85);
   }
   .sidebar-body {
     overflow: visible;
-  }
-  .map-legend {
-    flex-wrap: wrap;
   }
   .legend {
     flex-wrap: wrap;

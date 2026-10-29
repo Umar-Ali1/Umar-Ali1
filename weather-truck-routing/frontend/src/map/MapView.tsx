@@ -61,6 +61,7 @@ export default function MapView(props: Props) {
       </Pane>
       <HeatBridge data={props.heatVisible ? props.heatmap : null} metric={props.heatMetric} hour={props.hour} />
       <ZoomControl />
+      <TrackSize />
       <FitToPlan plan={plan} />
       <FocusCheckpoint cp={props.focus} />
 
@@ -113,12 +114,25 @@ function HeatBridge({ data, metric, hour }: { data: Heatmap | null; metric: Heat
   return null
 }
 
+/** Leaflet caches its container size; re-measure whenever the layout changes it. */
+function TrackSize() {
+  const map = useMap()
+  useEffect(() => {
+    const ro = new ResizeObserver(() => map.invalidateSize({ pan: false }))
+    ro.observe(map.getContainer())
+    return () => ro.disconnect()
+  }, [map])
+  return null
+}
+
 function FitToPlan({ plan }: { plan: Plan | null }) {
   const map = useMap()
   useEffect(() => {
     if (!plan) return
     const pts = plan.routes.flatMap((r) => r.geometry)
-    if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [48, 48] })
+    if (!pts.length) return
+    map.invalidateSize({ pan: false })
+    map.fitBounds(L.latLngBounds(pts), { padding: [48, 48] })
   }, [plan, map])
   return null
 }

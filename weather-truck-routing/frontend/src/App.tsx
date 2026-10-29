@@ -62,6 +62,8 @@ export default function App() {
     }
     setPlan(p)
     setFormOpen(false)
+    // On narrow screens the map sits above the form; bring the result into view.
+    if (window.matchMedia('(max-width: 900px)').matches) window.scrollTo({ top: 0, behavior: 'smooth' })
     setSelectedId(p.recommendation.route_id)
     setFocus(null)
     setHour(0)
