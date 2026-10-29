@@ -79,6 +79,9 @@ WHITENOISE_ROOT = FRONTEND_DIST if FRONTEND_DIST.exists() else None
 # --- Third-party providers (all keyless by default) -------------------------
 OSRM_BASE_URL = os.environ.get("OSRM_BASE_URL", "https://router.project-osrm.org")
 NOMINATIM_BASE_URL = os.environ.get("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org")
+# Optional: a free OpenRouteService key switches routing to its truck (HGV) profile.
+ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
+ORS_BASE_URL = os.environ.get("ORS_BASE_URL", "https://api.openrouteservice.org")
 OPEN_METEO_BASE_URL = os.environ.get("OPEN_METEO_BASE_URL", "https://api.open-meteo.com")
 HTTP_USER_AGENT = os.environ.get(
     "HTTP_USER_AGENT", "weather-truck-routing/1.0 (assessment demo)"

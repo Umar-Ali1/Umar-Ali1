@@ -80,11 +80,25 @@ def search_places(query: str, limit: int = 5) -> list[dict]:
 
 
 # --- Routing -----------------------------------------------------------------
+#
+# Every provider returns the same shape:
+#   {coords: [(lon, lat)], seg_distance_m: [..], seg_duration_s: [..], distance_m, duration_s}
+# with len(seg_*) == len(coords) - 1, so ETAs can be interpolated along the line.
+
+US_TRUCK_HEIGHT_M = 4.11  # 13'6", the de-facto US van-trailer height
+TYPICAL_TARE_LB = 35_000  # tractor + empty 53' trailer
+LB_PER_TONNE = 2204.62
+
+
+def routes(waypoints: list[tuple[float, float]], alternatives: int = 0, load_lb: float = 0) -> list[dict]:
+    """Routes through ``waypoints`` (lon, lat) from the configured provider."""
+    if settings.ORS_API_KEY:
+        return ors_routes(waypoints, alternatives, load_lb)
+    return osrm_routes(waypoints, alternatives)
 
 
 def osrm_routes(waypoints: list[tuple[float, float]], alternatives: int = 0) -> list[dict]:
-    """Driving routes through ``waypoints`` (lon, lat). Each route carries full
-    GeoJSON geometry plus per-segment distance/duration annotations."""
+    """OSRM public server (car profile; trucks are adjusted downstream)."""
     coords = ";".join(f"{lon:.5f},{lat:.5f}" for lon, lat in waypoints)
     params = {
         "overview": "full",
@@ -99,37 +113,105 @@ def osrm_routes(waypoints: list[tuple[float, float]], alternatives: int = 0) -> 
     data = _get_json(f"{settings.OSRM_BASE_URL}/route/v1/driving/{coords}", params)
     if data.get("code") != "Ok":
         raise ProviderError(f"OSRM: {data.get('code')} {data.get('message', '')}")
-    routes = []
-    for r in data["routes"]:
-        seg_dist, seg_dur = [], []
-        for leg in r["legs"]:
-            seg_dist += leg["annotation"]["distance"]
-            seg_dur += leg["annotation"]["duration"]
-        coords_ll = [tuple(c) for c in r["geometry"]["coordinates"]]
-        # Multi-leg routes repeat the via point at the leg boundary; annotations do not.
-        coords_ll = _dedupe_consecutive(coords_ll)
-        if len(coords_ll) != len(seg_dist) + 1:
-            coords_ll = coords_ll[: len(seg_dist) + 1]
-        routes.append(
-            {
-                "coords": coords_ll,
-                "seg_distance_m": seg_dist,
-                "seg_duration_s": seg_dur,
-                "distance_m": r["distance"],
-                "duration_s": r["duration"],
-                "summary": " / ".join(leg.get("summary", "") for leg in r["legs"] if leg.get("summary")),
-            }
-        )
-    cache.set(key, routes, 6 * 3600)
-    return routes
-
-
-def _dedupe_consecutive(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    out = [coords[0]]
-    for c in coords[1:]:
-        if c != out[-1]:
-            out.append(c)
+    out = [parse_osrm_route(r) for r in data["routes"]]
+    cache.set(key, out, 6 * 3600)
     return out
+
+
+def parse_osrm_route(r: dict) -> dict:
+    anns = [leg["annotation"] for leg in r["legs"]]
+    seg_dist = [d for a in anns for d in a["distance"]]
+    seg_dur = [t for a in anns for t in a["duration"]]
+    coords = [tuple(c) for c in r["geometry"]["coordinates"]]
+    if len(coords) == len(seg_dist) + len(anns) and len(anns) > 1:
+        # Each leg's geometry repeats the shared via vertex; drop the repeat per leg.
+        merged, i = [], 0
+        for a in anns:
+            n = len(a["distance"]) + 1
+            merged += coords[i : i + n] if not merged else coords[i + 1 : i + n]
+            i += n
+        coords = merged
+    if len(coords) != len(seg_dist) + 1:
+        raise ProviderError("OSRM geometry and annotations do not line up")
+    return {
+        "coords": coords,
+        "seg_distance_m": seg_dist,
+        "seg_duration_s": seg_dur,
+        "distance_m": r["distance"],
+        "duration_s": r["duration"],
+    }
+
+
+def ors_routes(waypoints: list[tuple[float, float]], alternatives: int, load_lb: float) -> list[dict]:
+    """OpenRouteService heavy-goods-vehicle profile (free key).
+
+    Unlike OSRM's car profile this honours truck restrictions in OSM data —
+    bridge weight limits, low clearances, truck-prohibited parkways — for the
+    truck's estimated gross weight.
+    """
+    body = {
+        "coordinates": [[round(lon, 5), round(lat, 5)] for lon, lat in waypoints],
+        "instructions": True,  # steps carry the per-section durations we need
+        "options": {
+            "vehicle_type": "hgv",
+            "profile_params": {
+                "restrictions": {
+                    "weight": round((load_lb + TYPICAL_TARE_LB) / LB_PER_TONNE, 1),
+                    "height": US_TRUCK_HEIGHT_M,
+                }
+            },
+        },
+    }
+    # ORS only computes alternatives for routes under ~100 km; asking beyond that is an error.
+    if alternatives and len(waypoints) == 2 and haversine_km(*waypoints) < 80:
+        body["alternative_routes"] = {"target_count": alternatives, "share_factor": 0.6, "weight_factor": 1.6}
+    key = _cache_key("ors", body)
+    if (hit := cache.get(key)) is not None:
+        return hit
+    try:
+        resp = _http.post(
+            f"{settings.ORS_BASE_URL}/v2/directions/driving-hgv/geojson",
+            json=body,
+            headers={"Authorization": settings.ORS_API_KEY},
+            timeout=settings.HTTP_TIMEOUT_SECONDS,
+        )
+    except requests.RequestException as exc:
+        raise ProviderError(f"OpenRouteService: {exc}") from exc
+    if resp.status_code >= 400:
+        raise ProviderError(f"OpenRouteService: HTTP {resp.status_code} {resp.text[:200]}")
+    out = [parse_ors_feature(f) for f in resp.json().get("features", [])]
+    cache.set(key, out, 6 * 3600)
+    return out
+
+
+def parse_ors_feature(feature: dict) -> dict:
+    """ORS gives durations per instruction step, not per vertex. Spread each
+    step's duration over its vertices in proportion to their length."""
+    from .geo import haversine_m
+
+    coords = [tuple(c[:2]) for c in feature["geometry"]["coordinates"]]
+    seg_dist = [haversine_m(coords[i], coords[i + 1]) for i in range(len(coords) - 1)]
+    seg_dur = [0.0] * len(seg_dist)
+    for segment in feature["properties"].get("segments", []):
+        for step in segment.get("steps", []):
+            a, b = step["way_points"]
+            span = sum(seg_dist[a:b])
+            for i in range(a, b):
+                seg_dur[i] = step["duration"] * (seg_dist[i] / span if span else 1 / max(b - a, 1))
+    summary = feature["properties"]["summary"]
+    return {
+        "coords": coords,
+        "seg_distance_m": seg_dist,
+        "seg_duration_s": seg_dur,
+        "distance_m": summary.get("distance", sum(seg_dist)),
+        "duration_s": summary.get("duration", sum(seg_dur)),
+    }
+
+
+def haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    from .geo import haversine_m
+
+    return haversine_m(a, b) / 1000
 
 
 # --- Weather -----------------------------------------------------------------

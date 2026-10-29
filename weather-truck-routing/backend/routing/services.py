@@ -14,8 +14,11 @@ from .risk import Risk, assess
 log = logging.getLogger(__name__)
 
 ROUTE_OPTIONS = 3
-MAX_DETOUR_FACTOR = 1.6  # synthesized alternatives may be at most 60% slower than the fastest
-MAX_OVERLAP = 0.8  # an alternative must differ from every other by > 20% of its length
+# (via-point offsets as a fraction of trip length, max slowdown vs fastest, max shared length)
+RELAXATION_TIERS = [
+    ((0.12, 0.22), 1.6, 0.8),
+    ((0.3, 0.45), 2.0, 0.88),
+]
 FORECAST_HORIZON = timedelta(days=providers.MAX_FORECAST_DAYS - 1)
 
 
@@ -39,48 +42,56 @@ def _truckify(route: dict) -> dict:
     return {**route, "seg_duration_s": durations, "duration_s": sum(durations)}
 
 
-def get_route_options(origin: geo.LonLat, dest: geo.LonLat) -> list[dict]:
+def get_route_options(origin: geo.LonLat, dest: geo.LonLat, load_lb: float = 0) -> list[dict]:
     """Up to three meaningfully different routes.
 
     OSRM's alternatives often return only 1–2 routes on long trips, so we fill the
     gap by forcing routes through via points offset to either side of the
     origin→destination line, keeping only ones that are distinct and not absurd.
     """
-    routes = [_truckify(r) for r in providers.osrm_routes([origin, dest], alternatives=ROUTE_OPTIONS)]
+    routes = [_truckify(r) for r in providers.routes([origin, dest], alternatives=ROUTE_OPTIONS, load_lb=load_lb)]
     if not routes:
         raise providers.ProviderError("No route found between these locations")
     for r in routes:
-        r["source"] = "osrm"
+        r["source"] = "provider"
 
-    if len(routes) < ROUTE_OPTIONS:
-        vias = [
-            geo.offset_point(origin, dest, along, side * frac)
-            for frac in (0.12, 0.22)
-            for along in (0.5, 0.35, 0.65)
-            for side in (1, -1)
-        ]
-
-        def fetch(via):
-            try:
-                return providers.osrm_routes([origin, via, dest])
-            except providers.ProviderError as exc:
-                log.info("via route failed: %s", exc)
-                return []
-
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            candidates = [_truckify(r) for found in pool.map(fetch, vias) for r in found]
-        fastest = min(r["duration_s"] for r in routes)
-        for cand in sorted(candidates, key=lambda r: r["duration_s"]):
-            if len(routes) >= ROUTE_OPTIONS:
-                break
-            if cand["duration_s"] > fastest * MAX_DETOUR_FACTOR:
-                continue
-            if all(_overlap(cand, r) < MAX_OVERLAP for r in routes):
-                cand["source"] = "via"
-                routes.append(cand)
+    # Widen the search only as far as needed: short trips (few parallel roads)
+    # usually need the second, looser tier to find a third distinct option.
+    for offsets, max_detour, max_overlap in RELAXATION_TIERS:
+        if len(routes) >= ROUTE_OPTIONS:
+            break
+        _add_via_routes(routes, origin, dest, load_lb, offsets, max_detour, max_overlap)
 
     routes.sort(key=lambda r: r["duration_s"])
     return routes[:ROUTE_OPTIONS]
+
+
+def _add_via_routes(routes, origin, dest, load_lb, offsets, max_detour, max_overlap) -> None:
+    vias = [
+        geo.offset_point(origin, dest, along, side * frac)
+        for frac in offsets
+        for along in (0.5, 0.35, 0.65)
+        for side in (1, -1)
+    ]
+
+    def fetch(via):
+        try:
+            return providers.routes([origin, via, dest], load_lb=load_lb)
+        except providers.ProviderError as exc:
+            log.info("via route failed: %s", exc)
+            return []
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        candidates = [_truckify(r) for found in pool.map(fetch, vias) for r in found]
+    fastest = min(r["duration_s"] for r in routes)
+    for cand in sorted(candidates, key=lambda r: r["duration_s"]):
+        if len(routes) >= ROUTE_OPTIONS:
+            return
+        if cand["duration_s"] > fastest * max_detour:
+            continue
+        if all(_overlap(cand, r) < max_overlap for r in routes):
+            cand["source"] = "via"
+            routes.append(cand)
 
 
 def _samples(route: dict, step_m: float = 2000) -> list[geo.LonLat]:
@@ -231,7 +242,7 @@ def recommend(routes: list[dict]) -> dict:
 def plan_trip(req: TripRequest) -> dict:
     origin = (req.origin["lon"], req.origin["lat"])
     dest = (req.destination["lon"], req.destination["lat"])
-    raw_routes = get_route_options(origin, dest)
+    raw_routes = get_route_options(origin, dest, req.load_lb)
 
     routes = []
     for i, r in enumerate(raw_routes):
@@ -265,6 +276,7 @@ def plan_trip(req: TripRequest) -> dict:
         "interval_mi": req.interval_mi,
         "hos_applied": req.apply_hos,
         "weather_source": settings.WEATHER_PROVIDER,
+        "routing_source": "openrouteservice-hgv" if settings.ORS_API_KEY else "osrm",
         "routes": routes,
         "recommendation": recommendation,
     }

@@ -9,20 +9,17 @@ const BAR_KEYS = ['low', 'moderate', 'high', 'severe', 'no_travel'] as const
 function RouteCards({ plan, selectedId, onSelect }: Props) {
   const recommended = plan.recommendation.route_id
   const fastest = Math.min(...plan.routes.map((r) => r.duration_s))
+  // Best first; colours stay keyed to the API order so cards match their map lines.
+  const ranked = [...plan.routes].sort((a, b) => a.rank - b.rank)
   return (
     <div className="cards">
-      <div className="rec">
-        <span className="badge">Recommended</span>
-        <strong>{plan.routes.find((r) => r.id === recommended)?.name}</strong>
-        <p>{plan.recommendation.reason}</p>
-      </div>
-      {plan.routes.map((r, i) => (
+      {ranked.map((r) => (
         <RouteCard
           key={r.id}
           route={r}
-          color={ROUTE_COLORS[i % ROUTE_COLORS.length]}
+          color={ROUTE_COLORS[plan.routes.indexOf(r) % ROUTE_COLORS.length]}
           selected={r.id === selectedId}
-          recommended={r.id === recommended}
+          reason={r.id === recommended ? plan.recommendation.reason : null}
           slower={r.duration_s - fastest}
           onSelect={onSelect}
         />
@@ -35,14 +32,14 @@ function RouteCard({
   route,
   color,
   selected,
-  recommended,
+  reason,
   slower,
   onSelect,
 }: {
   route: Route
   color: string
   selected: boolean
-  recommended: boolean
+  reason: string | null
   slower: number
   onSelect: (id: string) => void
 }) {
@@ -51,19 +48,19 @@ function RouteCard({
   return (
     <button
       type="button"
-      className={`card ${selected ? 'selected' : ''}`}
+      className={`card ${selected ? 'selected' : ''} ${reason ? 'best' : ''}`}
       style={{ borderLeftColor: color }}
       onClick={() => onSelect(route.id)}
       aria-pressed={selected}
     >
       <div className="card-head">
         <strong>{route.name}</strong>
-        {recommended && <span className="badge">Best</span>}
-        <span className="rank">#{route.rank}</span>
+        {reason ? <span className="badge">Recommended</span> : <span className="rank">#{route.rank}</span>}
         <span className="max-risk" style={{ background: riskColor(route.summary.max_level) }}>
           worst: {route.summary.max_label}
         </span>
       </div>
+      {reason && <p className="reason">{reason}</p>}
       <div className="stats">
         <span>{fmtMiles(route.distance_mi)}</span>
         <span>

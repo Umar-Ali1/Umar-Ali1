@@ -228,17 +228,12 @@ button.primary:disabled {
   flex-direction: column;
   gap: 8px;
 }
-.rec {
-  background: var(--accent-soft);
-  border-radius: var(--radius);
-  padding: 10px 12px;
+.card.best {
+  background: linear-gradient(0deg, #fff, var(--accent-soft));
 }
-.rec strong {
-  margin-left: 6px;
-}
-.rec p {
-  margin-top: 4px;
+.reason {
   font-size: 13px;
+  color: #174ea6;
 }
 .badge {
   display: inline-block;

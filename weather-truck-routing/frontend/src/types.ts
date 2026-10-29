@@ -55,7 +55,7 @@ export type RouteSummary = {
 export type Route = {
   id: string
   name: string
-  source: 'osrm' | 'via'
+  source: 'provider' | 'via'
   rank: number
   distance_mi: number
   driving_s: number
@@ -75,6 +75,7 @@ export type Plan = {
   interval_mi: 10 | 25 | 50
   hos_applied: boolean
   weather_source: string
+  routing_source: 'osrm' | 'openrouteservice-hgv'
   routes: Route[]
   recommendation: { route_id: string; reason: string }
 }
