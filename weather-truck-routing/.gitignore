@@ -1,0 +1,14 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+staticfiles/
+.pytest_cache/
+.vercel/
+*.log
+.DS_Store
