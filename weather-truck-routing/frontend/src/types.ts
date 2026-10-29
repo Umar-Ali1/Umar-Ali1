@@ -29,6 +29,17 @@ export type Checkpoint = {
   risk?: CheckpointRisk | null
 }
 
+export type PoiKind = 'weigh_station' | 'scale' | 'rest_area' | 'truck_parking' | 'truck_stop'
+
+export type Poi = {
+  kind: PoiKind
+  name: string
+  lat: number
+  lon: number
+  mile: number
+  off_route_mi: number
+}
+
 export type Stop = {
   kind: 'break' | 'reset'
   lat: number
@@ -36,6 +47,8 @@ export type Stop = {
   mile: number
   start: string
   duration_h: number
+  /** Last truck parking / truck stop / rest area within 30 mi before the limit */
+  suggested: Poi | null
 }
 
 export type RouteSummary = {
@@ -64,6 +77,7 @@ export type Route = {
   geometry: [number, number][]
   checkpoints: Checkpoint[]
   stops: Stop[]
+  pois: Poi[]
   summary: RouteSummary
 }
 
@@ -93,6 +107,8 @@ export type Heatmap = {
 }
 
 export type HeatMetric = 'risk' | 'wind' | 'precip'
+
+export type Basemap = 'light' | 'streets' | 'satellite'
 
 export type TripInput = {
   origin: Place | string

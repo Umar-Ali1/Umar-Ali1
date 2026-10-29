@@ -12,3 +12,4 @@ staticfiles/
 .vercel/
 *.log
 .DS_Store
+routing/data/*.partial.json

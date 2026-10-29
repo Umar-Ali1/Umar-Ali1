@@ -207,3 +207,42 @@ def test_unknown_miles_rank_worse_than_known_low():
              "summary": services.summarize([{"represents_mi": 10, "risk": {"level": 0}}, {"represents_mi": 50}])}
     known = fake_route("B", 3600, [Risk.MODERATE] * 6)
     assert services.recommend([gappy, known])["route_id"] == "B"
+
+
+# --- Truck POIs -----------------------------------------------------------------------
+
+
+@pytest.fixture
+def poi_snapshot(tmp_path, monkeypatch):
+    from routing import pois
+
+    f = tmp_path / "pois.json"
+    f.write_text(
+        '{"pois": [["weigh_station", 35.5, -95.0, "Scale A"], ["truck_stop", 35.9, -95.0, "Pilot"],'
+        ' ["rest_area", 35.5, -94.5, "Far away"]]}'
+    )
+    monkeypatch.setattr(pois, "DATA_FILE", f)
+    pois._index.cache_clear()
+    yield pois
+    pois._index.cache_clear()
+
+
+def test_pois_along_route_are_filtered_and_ordered(poi_snapshot):
+    route = straight_route(100)
+    found = poi_snapshot.along_route(route["coords"], route["seg_distance_m"])
+    assert [p["name"] for p in found] == ["Scale A", "Pilot"]  # the rest area is ~28 mi east
+    assert found[0]["mile"] == pytest.approx(34.5, abs=1)
+    assert found[0]["off_route_mi"] < 0.1
+
+
+def test_rest_suggestion_is_last_parking_before_stop():
+    stops = [{"mile": 100.0}, {"mile": 500.0}]
+    nearby = [
+        {"kind": "truck_stop", "mile": 80.0},
+        {"kind": "truck_parking", "mile": 95.0},
+        {"kind": "weigh_station", "mile": 99.0},  # not somewhere to rest
+        {"kind": "rest_area", "mile": 105.0},  # past the limit
+    ]
+    services.suggest_rest_locations(stops, nearby)
+    assert stops[0]["suggested"]["mile"] == 95.0
+    assert stops[1]["suggested"] is None

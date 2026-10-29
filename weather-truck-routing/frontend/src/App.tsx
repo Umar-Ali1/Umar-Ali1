@@ -1,12 +1,15 @@
+import { CloudLightning, Truck } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { ApiError, api } from './api'
-import CheckpointTable from './components/CheckpointTable'
+import MapControls from './components/MapControls'
 import RouteCards from './components/RouteCards'
+import RouteDetail from './components/RouteDetail'
 import TimeSlider from './components/TimeSlider'
 import TripForm from './components/TripForm'
 import MapView from './map/MapView'
+import { POI_KINDS } from './poi'
 import { RISK_COLORS, RISK_LABELS } from './risk'
-import type { Checkpoint, HeatMetric, Heatmap, Plan, TripInput } from './types'
+import type { Basemap, Checkpoint, HeatMetric, Heatmap, Plan, PoiKind, TripInput } from './types'
 
 /** Every Nth vertex of each route — enough to outline the corridor for the heatmap grid. */
 function corridorOf(plan: Plan): [number, number][] {
@@ -22,6 +25,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [focus, setFocus] = useState<Checkpoint | null>(null)
+  const [formOpen, setFormOpen] = useState(true)
+  const expandForm = useCallback(() => setFormOpen(true), [])
 
   const [heatmap, setHeatmap] = useState<Heatmap | null>(null)
   const [heatLoading, setHeatLoading] = useState(false)
@@ -30,30 +35,46 @@ export default function App() {
   const [metric, setMetric] = useState<HeatMetric>('risk')
   const [heatVisible, setHeatVisible] = useState(true)
 
+  const [basemap, setBasemap] = useState<Basemap>('light')
+  const [poiKinds, setPoiKinds] = useState<Set<PoiKind>>(() => new Set(POI_KINDS.filter((k) => k !== 'rest_area')))
+  const togglePoi = useCallback(
+    (k: PoiKind) =>
+      setPoiKinds((prev) => {
+        const next = new Set(prev)
+        if (next.has(k)) next.delete(k)
+        else next.add(k)
+        return next
+      }),
+    [],
+  )
+
   const submit = useCallback(async (input: TripInput) => {
     setPlanning(true)
     setError(null)
     setHeatError(null)
+    let p: Plan
     try {
-      const p = await api.plan(input)
-      setPlan(p)
-      setSelectedId(p.recommendation.route_id)
-      setFocus(null)
-      setHour(0)
-      setPlanning(false)
-      // The heatmap loads after routes are on screen so the main result is never blocked by it.
-      setHeatmap(null)
-      setHeatLoading(true)
-      try {
-        setHeatmap(await api.heatmap(corridorOf(p), p.departure, p.load_lb))
-      } catch (e) {
-        setHeatError(e instanceof ApiError ? e.message : 'Heatmap failed to load')
-      } finally {
-        setHeatLoading(false)
-      }
+      p = await api.plan(input)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Something went wrong')
       setPlanning(false)
+      return
+    }
+    setPlan(p)
+    setFormOpen(false)
+    setSelectedId(p.recommendation.route_id)
+    setFocus(null)
+    setHour(0)
+    setPlanning(false)
+    // The heatmap loads after the routes are on screen so it never blocks the main result.
+    setHeatmap(null)
+    setHeatLoading(true)
+    try {
+      setHeatmap(await api.heatmap(corridorOf(p), p.departure, p.load_lb))
+    } catch (e) {
+      setHeatError(e instanceof ApiError ? e.message : 'Heatmap failed to load')
+    } finally {
+      setHeatLoading(false)
     }
   }, [])
 
@@ -62,29 +83,43 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <header>
-          <h1>
-            <span aria-hidden>🚚</span> Weather-Aware Truck Routing
-          </h1>
-          <p className="muted">Three route options scored against forecast wind, rain and snow at the truck's arrival time.</p>
+        <header className="brand">
+          <span className="brand-mark">
+            <Truck size={20} />
+          </span>
+          <div>
+            <h1>StormRoute</h1>
+            <p>Weather-aware truck routing</p>
+          </div>
         </header>
-        <TripForm loading={planning} onSubmit={submit} />
-        {error && <div className="error">{error}</div>}
-        {plan?.weather_source === 'mock' && (
-          <div className="note warn">Demo weather: the server is running with synthetic (mock) forecasts.</div>
-        )}
-        {plan && <RouteCards plan={plan} selectedId={selectedId} onSelect={setSelectedId} />}
-        {selected && (
-          <section>
-            <h2>
-              {selected.name} checkpoints <span className="muted">every {plan!.interval_mi} mi</span>
-            </h2>
-            <CheckpointTable route={selected} onFocus={setFocus} />
-          </section>
-        )}
-        <footer className="muted small">
-          Routing © OSRM/OpenStreetMap · Weather © Open-Meteo · Times shown in your local time zone
-        </footer>
+
+        <div className="sidebar-body">
+          <TripForm loading={planning} collapsed={!formOpen && !!plan} onExpand={expandForm} onSubmit={submit} />
+          {error && (
+            <div className="error" role="alert">
+              {error}
+            </div>
+          )}
+          {plan?.weather_source === 'mock' && (
+            <div className="note warn">Demo weather: the server is running with synthetic (mock) forecasts.</div>
+          )}
+
+          {planning && !plan && <Skeleton />}
+          {plan && (
+            <>
+              <h2 className="section-title">
+                Route options <span className="muted">best first</span>
+              </h2>
+              <RouteCards plan={plan} selectedId={selectedId} onSelect={setSelectedId} />
+            </>
+          )}
+          {plan && selected && <RouteDetail plan={plan} route={selected} onFocus={setFocus} />}
+
+          <footer className="muted small">
+            Routing © {plan?.routing_source === 'openrouteservice-hgv' ? 'openrouteservice' : 'OSRM'} · OpenStreetMap
+            contributors · Weather © Open-Meteo · Times in your local zone
+          </footer>
+        </div>
       </aside>
 
       <main className="map-wrap">
@@ -96,10 +131,13 @@ export default function App() {
           hour={hour}
           selectedId={selectedId}
           focus={focus}
+          basemap={basemap}
+          poiKinds={poiKinds}
           onSelect={setSelectedId}
         />
+        <MapControls basemap={basemap} onBasemap={setBasemap} poiKinds={poiKinds} onTogglePoi={togglePoi} />
         <div className="map-legend" aria-label="Checkpoint risk legend">
-          <strong>Checkpoint risk</strong>
+          <strong>Risk</strong>
           {RISK_LABELS.map((l, i) => (
             <span key={l}>
               <i style={{ background: RISK_COLORS[i] }} />
@@ -120,8 +158,31 @@ export default function App() {
             onVisible={setHeatVisible}
           />
         )}
-        {planning && <div className="map-overlay">Fetching routes and forecasts…</div>}
+        {!plan && !planning && (
+          <div className="map-empty">
+            <CloudLightning size={28} />
+            <div>
+              <strong>Plan a trip to compare routes</strong>
+              <p>We'll check wind, rain and snow at the exact hour your truck reaches each checkpoint.</p>
+            </div>
+          </div>
+        )}
+        {planning && (
+          <div className="map-overlay" role="status">
+            <span className="spinner" /> Fetching routes and forecasts…
+          </div>
+        )}
       </main>
+    </div>
+  )
+}
+
+function Skeleton() {
+  return (
+    <div className="skeleton" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="sk-card" />
+      ))}
     </div>
   )
 }

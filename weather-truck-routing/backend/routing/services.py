@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from django.conf import settings
 
-from . import geo, hos, providers
+from . import geo, hos, pois, providers
 from .risk import Risk, assess
 
 log = logging.getLogger(__name__)
@@ -164,6 +164,21 @@ def build_checkpoints(route: dict, req: TripRequest) -> tuple[list[dict], list[d
     return checkpoints, stop_out, hos.elapsed_for(total_drive_s, stops)
 
 
+REST_KINDS = ("truck_stop", "truck_parking", "rest_area")
+REST_SEARCH_MI = 30
+
+
+def suggest_rest_locations(stops: list[dict], nearby: list[dict]) -> None:
+    """For each HOS stop, the last legal truck parking spot before it.
+
+    Drivers must stop *by* the limit, not at an exact mile, so the useful answer
+    is the latest place to park within REST_SEARCH_MI before the stop point.
+    """
+    for s in stops:
+        options = [p for p in nearby if p["kind"] in REST_KINDS and s["mile"] - REST_SEARCH_MI <= p["mile"] <= s["mile"]]
+        s["suggested"] = max(options, key=lambda p: p["mile"]) if options else None
+
+
 # --- Scoring & recommendation ------------------------------------------------
 
 
@@ -247,6 +262,8 @@ def plan_trip(req: TripRequest) -> dict:
     routes = []
     for i, r in enumerate(raw_routes):
         checkpoints, stops, total_s = build_checkpoints(r, req)
+        nearby = pois.along_route(r["coords"], r["seg_distance_m"])
+        suggest_rest_locations(stops, nearby)
         routes.append(
             {
                 "id": f"route-{i + 1}",
@@ -259,6 +276,7 @@ def plan_trip(req: TripRequest) -> dict:
                 "geometry": [[round(lat, 5), round(lon, 5)] for lon, lat in geo.simplify(r["coords"])],
                 "checkpoints": checkpoints,
                 "stops": stops,
+                "pois": nearby,
             }
         )
 

@@ -1,3 +1,4 @@
+import { ArrowRight, Pencil } from 'lucide-react'
 import { memo, useState } from 'react'
 import type { Place, TripInput } from '../types'
 import PlaceInput from './PlaceInput'
@@ -13,9 +14,16 @@ function defaultDeparture(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-type Props = { loading: boolean; onSubmit: (input: TripInput) => void }
+type Props = {
+  loading: boolean
+  collapsed: boolean
+  onExpand: () => void
+  onSubmit: (input: TripInput) => void
+}
 
-function TripForm({ loading, onSubmit }: Props) {
+const placeName = (p: Place | string) => (typeof p === 'string' ? p : p.name).split(',')[0]
+
+function TripForm({ loading, collapsed, onExpand, onSubmit }: Props) {
   const [origin, setOrigin] = useState<Place | string>('Chicago, IL')
   const [destination, setDestination] = useState<Place | string>('Denver, CO')
   const [departure, setDeparture] = useState(defaultDeparture)
@@ -24,6 +32,26 @@ function TripForm({ loading, onSubmit }: Props) {
   const [hos, setHos] = useState(true)
 
   const gross = load + TYPICAL_TARE_LB
+
+  // State lives here, so collapsing to a summary keeps every field as entered.
+  if (collapsed) {
+    return (
+      <div className="trip-summary">
+        <div>
+          <div className="trip-od">
+            {placeName(origin)} <ArrowRight size={14} /> {placeName(destination)}
+          </div>
+          <div className="muted small">
+            {new Date(departure).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}{' '}
+            · {load.toLocaleString()} lb · every {interval} mi{hos ? ' · HOS' : ''}
+          </div>
+        </div>
+        <button type="button" className="ghost" onClick={onExpand}>
+          <Pencil size={13} /> Edit
+        </button>
+      </div>
+    )
+  }
 
   return (
     <form
